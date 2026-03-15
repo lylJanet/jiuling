@@ -1,0 +1,7 @@
+streamlit
+pandas
+openpyxl
+openai
+anthropic
+python-docx
+numpy
