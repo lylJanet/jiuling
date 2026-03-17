@@ -133,17 +133,6 @@ def call_llm(prompt, provider, key, base_url=None):
                 temperature=0.7
             )
             return response.choices[0].message.content
-
-        elif provider == "DeepSeek (deepseek-chat)":
-            client_kwargs = {"api_key": key, "base_url": base_url or "https://api.deepseek.com/v1"}
-            client = OpenAI(**client_kwargs)
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": "你是一个资深的商业分析师和文档专家。"},
-                          {"role": "user", "content": prompt}],
-                temperature=0.7
-            )
-            return response.choices[0].message.content
     except Exception as e:
         return f"调用大模型失败: {str(e)}"
 
@@ -171,16 +160,12 @@ with st.sidebar:
     st.markdown("---")
     
     st.markdown("**模型设置**")
-    api_provider = st.selectbox("选择模型引擎", ["Kimi (Moonshot AI)", "DeepSeek (deepseek-chat)", "OpenAI (GPT-4o)", "Anthropic (Claude 3.5)"])
+    api_provider = st.selectbox("选择模型引擎", ["Kimi (Moonshot AI)", "OpenAI (GPT-4o)", "Anthropic (Claude 3.5)"])
     
     default_api_key = ""
     default_base_url = ""
     if api_provider == "Kimi (Moonshot AI)":
         default_base_url = "https://api.moonshot.cn/v1"
-        default_api_key = st.secrets.get("KIMI_API_KEY", "")
-    elif api_provider == "DeepSeek (deepseek-chat)":
-        default_base_url = "https://api.deepseek.com/v1"
-        default_api_key = st.secrets.get("DEEPSEEK_API_KEY", "")
     api_key = st.text_input("API Key", value=default_api_key, type="password")
     
     with st.expander("高级设置（可选）", expanded=False):
@@ -192,7 +177,7 @@ with st.sidebar:
         pass
 
     st.markdown("---")
-    st.info("支持 Kimi / DeepSeek / OpenAI / Claude，提供全流程文档与数据智能分析")
+    st.info("基于 Kimi K2.5 模型，提供全流程文档与数据智能分析")
 
 # 主区域（原样保留）
 col_header_1, col_header_2 = st.columns([1, 6])
