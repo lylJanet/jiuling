@@ -33,7 +33,16 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid #e0e0e0; }
+    [data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid rgba(0, 255, 255, 0.35);
+        box-shadow: 0 0 18px rgba(0, 255, 255, 0.18);
+    }
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] > div {
+        border: 1px solid rgba(30,136,229,0.45);
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0,255,255,0.2);
+    }
     .custom-footer { text-align: center; color: #757575; padding: 20px; font-size: 0.85rem; border-top: 1px solid #e0e0e0; margin-top: 40px; }
 </style>
 """, unsafe_allow_html=True)
@@ -92,51 +101,31 @@ def process_multiple_files(files):
         
     return combined_text, overall_type, file_summaries
 
-def call_llm(prompt, provider, key, base_url=None):
+def get_provider_config(provider):
+    if provider == "Kimi (Moonshot AI)":
+        return "https://api.moonshot.cn/v1", "moonshot-v1-8k", st.secrets.get("KIMI_API_KEY", "")
+    return "https://api.deepseek.com/v1", "deepseek-chat", st.secrets.get("DEEPSEEK_API_KEY", "")
+
+def get_or_create_client(api_key, base_url):
+    cache_key = f"{base_url}|{api_key}"
+    if st.session_state.get("client_cache_key") != cache_key:
+        st.session_state["llm_client"] = OpenAI(api_key=api_key, base_url=base_url)
+        st.session_state["client_cache_key"] = cache_key
+    return st.session_state.get("llm_client")
+
+def call_llm(prompt, client, model_name):
     try:
-        if provider == "OpenAI (GPT-4o)":
-            client_kwargs = {"api_key": key}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            client = OpenAI(**client_kwargs)
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "system", "content": "你是一个资深的商业分析师和文档专家。"},
-                          {"role": "user", "content": prompt}],
-                temperature=0.7
-            )
-            return response.choices[0].message.content
-            
-        elif provider == "Anthropic (Claude 3.5)":
-            if anthropic is None:
-                return "当前环境未安装 anthropic 依赖，请先安装 requirements.txt。"
-            client_kwargs = {"api_key": key}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            client = anthropic.Anthropic(**client_kwargs)
-            response = client.messages.create(
-                model="claude-3-5-sonnet-20240620",
-                max_tokens=2000,
-                temperature=0.7,
-                system="你是一个资深的商业分析师和文档专家。",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.content[0].text
-        
-        elif provider == "Kimi (Moonshot AI)":
-            client_kwargs = {"api_key": key, "base_url": base_url or "https://api.moonshot.cn/v1"}
-            client = OpenAI(**client_kwargs)
-            response = client.chat.completions.create(
-                model="moonshot-v1-32k",
-                messages=[{"role": "system", "content": "你是一个资深的商业分析师和文档专家。"},
-                          {"role": "user", "content": prompt}],
-                temperature=0.7
-            )
-            return response.choices[0].message.content
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "system", "content": "你是一个资深的商业分析师和文档专家。"},
+                      {"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        return response.choices[0].message.content
     except Exception as e:
         return f"调用大模型失败: {str(e)}"
 
-def get_analysis_report(combined_content, query, provider, key, base_url=None):
+def get_analysis_report(combined_content, query, client, model_name):
     prompt = f"""
 你是一个资深的商业分析师、数据科学家和文档专家。请根据以下我提供的【一个或多个文件的数据概览/内容片段】，回答用户的问题并生成一份详细的中文分析报告。
 {combined_content}
@@ -151,33 +140,57 @@ def get_analysis_report(combined_content, query, provider, key, base_url=None):
 4. **总结与建议**: 基于分析结果，给出具有可落地性的业务建议或后续行动指南。
 请直接输出 Markdown 格式的内容，不要包含无关的寒暄。
 """
-    return call_llm(prompt, provider, key, base_url)
+    return call_llm(prompt, client, model_name)
 
 # 页面布局（原样保留）
+if "api_provider" not in st.session_state:
+    st.session_state["api_provider"] = "Kimi (Moonshot AI)"
+if "KIMI_API_KEY_INPUT" not in st.session_state:
+    st.session_state["KIMI_API_KEY_INPUT"] = st.secrets.get("KIMI_API_KEY", "")
+if "DEEPSEEK_API_KEY_INPUT" not in st.session_state:
+    st.session_state["DEEPSEEK_API_KEY_INPUT"] = st.secrets.get("DEEPSEEK_API_KEY", "")
+
 with st.sidebar:
-    st.image("https://img.icons8.com/color/96/000000/bot.png", width=60)
-    st.title("配置面板")
+    st.title("⚙️ 配置面板")
     st.markdown("---")
-    
-    st.markdown("**模型设置**")
-    api_provider = st.selectbox("选择模型引擎", ["Kimi (Moonshot AI)", "OpenAI (GPT-4o)", "Anthropic (Claude 3.5)"])
-    
-    default_api_key = ""
-    default_base_url = ""
+
+    api_provider = st.selectbox(
+        "选择模型引擎",
+        ["Kimi (Moonshot AI)", "DeepSeek"],
+        index=0 if st.session_state["api_provider"] == "Kimi (Moonshot AI)" else 1
+    )
+    st.session_state["api_provider"] = api_provider
+
+    base_url, model_name, secret_api_key = get_provider_config(api_provider)
+
     if api_provider == "Kimi (Moonshot AI)":
-        default_base_url = "https://api.moonshot.cn/v1"
-    api_key = st.text_input("API Key", value=default_api_key, type="password")
-    
+        st.text_input("KIMI_API_KEY", type="password", key="KIMI_API_KEY_INPUT")
+        api_key = secret_api_key or st.session_state.get("KIMI_API_KEY_INPUT", "")
+    else:
+        st.text_input("DEEPSEEK_API_KEY", type="password", key="DEEPSEEK_API_KEY_INPUT")
+        api_key = secret_api_key or st.session_state.get("DEEPSEEK_API_KEY_INPUT", "")
+
+    st.session_state["active_api_key"] = api_key
+    st.session_state["active_base_url"] = base_url
+    st.session_state["active_model_name"] = model_name
+    st.session_state["active_client"] = get_or_create_client(api_key, base_url) if api_key else None
+
     with st.expander("高级设置（可选）", expanded=False):
-        base_url = st.text_input("Base URL", value=default_base_url)
+        base_url = st.text_input("Base URL", value=base_url)
+        custom_api_key = st.text_input("自定义 API Key（可选）", value="", type="password")
+        if custom_api_key:
+            api_key = custom_api_key
+            st.session_state["active_api_key"] = api_key
+            st.session_state["active_base_url"] = base_url
+            st.session_state["active_client"] = get_or_create_client(api_key, base_url)
+
     st.markdown("---")
-    
+
     with st.expander("📊 插件生态概览（模拟）", expanded=False):
-        # 你的模拟数据代码...
         pass
 
     st.markdown("---")
-    st.info("基于 Kimi K2.5 模型，提供全流程文档与数据智能分析")
+    st.caption("切换模型可获得不同分析风格，DeepSeek 擅长深度推理")
 
 # 主区域（原样保留）
 col_header_1, col_header_2 = st.columns([1, 6])
@@ -248,7 +261,15 @@ with col_right:
                 st.error("请先在左侧配置 API Key")
             else:
                 with st.spinner(f"🤖 AI 正在深度阅读并联合分析 {len(uploaded_files)} 份文件，请稍候..."):
-                    report = get_analysis_report(combined_content, user_query, api_provider, api_key, base_url)
+                    if not st.session_state.get("active_client"):
+                        st.error("请先在左侧配置对应模型的 API Key")
+                        st.stop()
+                    report = get_analysis_report(
+                        combined_content,
+                        user_query,
+                        st.session_state["active_client"],
+                        st.session_state["active_model_name"]
+                    )
                 if isinstance(report, str) and ("失败" in report or "未安装" in report):
                     st.error(report)
                 else:
